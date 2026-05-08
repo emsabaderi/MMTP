@@ -1,0 +1,13 @@
+name = "TuringPigeons"
+uuid = "03ae69e3-0473-40d0-81b9-dcb41d1409d4"
+authors = ["s"]
+version = "1.0.0-DEV"
+
+[compat]
+julia = "1.12"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
