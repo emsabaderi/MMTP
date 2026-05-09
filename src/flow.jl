@@ -10,9 +10,29 @@ Pkg.activate(".")
 
 # %%
 
-using MacroModelling
+using CSV, DataFrames, AxisKeys, MacroModelling
 
-# %% define moδ + equations
+# %% load data
+
+dat = CSV.read("data/FS2000_data.csv", DataFrame);
+
+# %% Transform to KeyedArray
+
+data = KeyedArray(Array(dat)',
+    Variable = Symbol.("log_".*names(dat)),
+    Time= 1:size(dat,1)
+);
+
+# %% logs
+
+data = log.(data);
+
+# %% declare observables
+
+observables = sort(Symbol.("log_".*names(dat)))
+data = data(observables,:)
+
+# %% define model
 
 @model FS2000 begin
     dA[0] = exp(γ + z_e_a*e_a[x])
@@ -96,6 +116,24 @@ Turing.@model function FS2000_loglikelihood_function(prior_distributions, data, 
     Turing.@addlogprob! get_loglikelihood(m, data, parameters)
 end
 
-# %% Sample: NUTS
+# %% Fit priors, data, model
 
-FS2000_loglikelihood = FS2000_loglikelihood_function(prior_distributions, data, FS2000)
+FS2000_loglikelihood = FS2000_loglikelihood_function(prior_distributions, data, FS2000) ;
+
+# %% Sampler: NUTS
+
+n_samples = 1000
+
+chain_NUTS = sample(FS2000_loglikelihood, NUTS(), n_samples, initial_params = FS2000.parameter_values)
+
+# %% Inspecting Posterior
+
+using StatsPlots
+paramlist = get_parameters(FS2000)
+chain_NUTS_rn = replacenames(chain_NUTS, Dict(["parameters[$i]" for i in 1:length(paramlist)] .=> get_parameters(FS2000)))
+# %%
+chain_NUTS_plot = plot(chain_NUTS_rn)
+
+# %%
+
+savefig(chain_NUTS_plot, "assets/plots/chain_NUTS_plot.png")
