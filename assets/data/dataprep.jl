@@ -1,7 +1,7 @@
 # %%
 
 using Pkg
-cd(joinpath(@__DIR__,".."))
+cd(joinpath(@__DIR__,"..",".."))
 Pkg.activate(".")
 
 # %%
@@ -10,7 +10,7 @@ using DataFrames, CSV
 
 # %% load data
 
-data_q = CSV.read("data/fsdat.csv", DataFrame, header=false);
+data_q = CSV.read("assets/data/fsdat.csv", DataFrame, header=false);
 
 # %%
 
@@ -33,4 +33,4 @@ gp_obs = series[:,2];
 # %%
 
 dat = DataFrame(hcat(gy_obs, gp_obs), [:gy_obs, :gp_obs]);
-CSV.write("data/FS2000_data.csv", dat)
+CSV.write("assets/data/FS2000_data.csv", dat)

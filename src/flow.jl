@@ -1,39 +1,33 @@
-# %%
-
+# %% Setup environment
 using Pkg
 cd(joinpath(@__DIR__,".."))
 Pkg.activate(".")
 
 # %% prep data
-
 # include("data/dataprep.jl")
 
 # %%
-
-using CSV, DataFrames, AxisKeys, MacroModelling
+using CSV, DataFrames, AxisKeys, MacroModelling, PrettyTables
 
 # %% load data
-
-dat = CSV.read("data/FS2000_data.csv", DataFrame);
+dat = CSV.read("assets/data/FS2000_data.csv", DataFrame);
+pretty_table(describe(dat))
 
 # %% Transform to KeyedArray
-
 data = KeyedArray(Array(dat)',
     Variable = Symbol.("log_".*names(dat)),
     Time= 1:size(dat,1)
 );
 
 # %% logs
-
 data = log.(data);
 
 # %% declare observables
-
-observables = sort(Symbol.("log_".*names(dat)))
+observables = sort(Symbol.("log_".*names(dat)));
 data = data(observables,:)
+describe(data)
 
 # %% define model
-
 @model FS2000 begin
     dA[0] = exp(γ + z_e_a*e_a[x])
 
@@ -70,7 +64,6 @@ data = data(observables,:)
 end
 
 # %% define parameters
-
 @parameters FS2000 begin
     α     = 0.356
     β     = 0.993
@@ -84,18 +77,14 @@ end
 end
 
 # %% Sampling imports
-
 import Turing
-
 import Turing: NUTS, sample, logpdf, replacenames
 
 import ADTypes: AutoZygote
-
 import Zygote
 
 # %% define prior dists
-
-prior_distributions = [
+prior_dists = [
     Beta(0.356, 0.02, μσ = true),           # \alpha
     Beta(0.993, 0.002, μσ = true),          # \beta
     Normal(0.0085, 0.003),                  # \gamma
@@ -108,26 +97,22 @@ prior_distributions = [
 ]
 
 # %% define sampling model
+Turing.@model function FS2000_loglik_func(prior_dists, data, m; verbose=false)
 
-Turing.@model function FS2000_loglikelihood_function(prior_distributions, data, m; verbose=false)
-
-    parameters ~ Turing.arraydist(prior_distributions)
+    parameters ~ Turing.arraydist(prior_dists)
 
     Turing.@addlogprob! get_loglikelihood(m, data, parameters)
 end
 
 # %% Fit priors, data, model
-
-FS2000_loglikelihood = FS2000_loglikelihood_function(prior_distributions, data, FS2000) ;
+FS2000_loglik = FS2000_loglik_func(prior_dists, data, FS2000) ;
 
 # %% Sampler: NUTS
-
 n_samples = 1000
 
-chain_NUTS = sample(FS2000_loglikelihood, NUTS(), n_samples, initial_params = FS2000.parameter_values)
+chain_NUTS = sample(FS2000_loglik, NUTS(), n_samples, initial_params = FS2000.parameter_values)
 
 # %% Inspecting Posterior
-
 using StatsPlots
 paramlist = get_parameters(FS2000)
 chain_NUTS_rn = replacenames(chain_NUTS, Dict(["parameters[$i]" for i in 1:length(paramlist)] .=> get_parameters(FS2000)))
@@ -135,5 +120,9 @@ chain_NUTS_rn = replacenames(chain_NUTS, Dict(["parameters[$i]" for i in 1:lengt
 chain_NUTS_plot = plot(chain_NUTS_rn)
 
 # %%
-
 savefig(chain_NUTS_plot, "assets/plots/chain_NUTS_plot.png")
+
+# %%
+describe(chain_NUTS_rn)
+
+# %% Add in Pigeons
