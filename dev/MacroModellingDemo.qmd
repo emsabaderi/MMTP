@@ -227,7 +227,7 @@ savefig(chain_NUTS_plot, "assets/plots/chain_NUTS_plot.png")
 chain_NUTS_rn
 ```
 
-[[../assets/plots/chain_NUTS_plot.png]]
+![[../assets/plots/chain_NUTS_plot.png]]
 
 ... Nice, so we can do DSGE in Julia easily. What advantages are there over MATLAB, R, etc...?
 Turing.jl is not the only "cutting-edge" sampling package...
