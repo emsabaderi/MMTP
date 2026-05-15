@@ -30,9 +30,10 @@ Only focused on reproducing **CIA Model** with the **MacroModelling.jl** package
 
 ```{julia}
 #| label: "julia and package version info"
+#===================SETUP ENVIRONMENT=====================#
 pwd()
 run(`julia --version`)
-using Pkg; Pkg.activate(".."); Pkg.status()
+using Pkg; Pkg.activate(joinpath("..","..")); Pkg.status()
 ```
 
 ## MacroModelling.jl: background
@@ -46,7 +47,7 @@ using Pkg; Pkg.activate(".."); Pkg.status()
 `MacroModelling.jl` is a Julia package for developing and solving dynamic stochastic general equilibrium (DSGE) models. v0.1 released 2023.
 
 - `MacroModelling.jl` serves as a tool for handling the complexities involved with DSGE modelling (forward-looking expectations, nonlinearity, and high dimensionality).
-- The goal is to reduce coding time and speed up model development by providing functions for working with discrete-time DSGE models. 
+- The goal is to reduce coding time and speed up model development by providing functions for working with discrete-time DSGE models.
 - The package allows the user to work with nonlinear model solutions ... and estimate the model using gradient based samplers (e.g. NUTS, or HMC).
 - Target audience includes central bankers, regulators, graduate students, and others working in academia with an interest in DSGE modelling.
 
@@ -64,68 +65,70 @@ Area of research and latest publications:
 ## Replication
 
 ```{julia}
+#========================DATA TRANSFORMATIONS=============================#
+# %% packages
+using AxisKeys
 
-# %% Setup environment
-using Pkg
-cd(joinpath(@__DIR__,".."))
-Pkg.activate(".")
-
-# %% prep data
-# include("data/dataprep.jl")
-
-# %%
-using CSV, DataFrames, AxisKeys, MacroModelling, PrettyTables
-```
-
-```{julia}
+import CSV: read
+import DataFrames: DataFrame, describe
 
 # %% load data
-dat = CSV.read("assets/data/FS2000_data.csv", DataFrame);
-pretty_table(describe(dat))
+dat = read("assets/data/FS2000_data.csv", DataFrame);
+dat |> describe |> pretty_table
 ```
 
 ```{julia}
-
+#| output: false
 # %% Transform to KeyedArray
 data = KeyedArray(Array(dat)',
-    Variable = Symbol.("log_".*names(dat)),
-    Time= 1:size(dat,1)
+    Variable=Symbol.("log_" .* names(dat)),
+    Time=1:size(dat, 1)
 );
 
 # %% logs
 data = log.(data);
 
 # %% declare observables
-observables = sort(Symbol.("log_".*names(dat)));
-data = data(observables,:)
-describe(data)
+observables = sort(Symbol.("log_" .* names(dat)));
+data = data(observables, :)
 ```
 
 ```{julia}
-# %% define model
-@model FS2000 begin
-    dA[0] = exp(γ + z_e_a*e_a[x])
-    log(m[0]) = (1 - ρ)*log(mst)  +  ρ*log(m[-1]) + z_e_m*e_m[x]
+#========================INITIALIZE MACROMODEL=============================#
+import MacroModelling
 
-    - P[0] / (c[1]*P[1]*m[0]) + β*P[1]*(α*exp(-α*(γ + log(e[1])))*k[0] ^ (α - 1)*n[1] ^ (1 - α) + (1 - δ)*exp( - (γ + log(e[1])))) / (c[2]*P[2]*m[1]) = 0
+# %% define model
+MacroModelling.@model FS2000 begin
+    dA[0] = exp(γ + z_e_a * e_a[x])
+
+    log(m[0]) = (1 - ρ) * log(mst) + ρ * log(m[-1]) + z_e_m * e_m[x]
+
+    -P[0] / (c[1] * P[1] * m[0]) + β * P[1] * (α * exp(-α * (γ + log(e[1]))) * k[0]^(α - 1) * n[1]^(1 - α) + (1 - δ) * exp(-(γ + log(e[1])))) / (c[2] * P[2] * m[1]) = 0
 
     W[0] = l[0] / n[0]
-    - (ψ / (1 - ψ))*(c[0]*P[0] / (1 - n[0])) + l[0] / n[0] = 0
 
-    R[0] = P[0]*(1 - α)*exp( - α*(γ + z_e_a*e_a[x]))*k[-1] ^ α*n[0] ^ ( - α) / W[0]
+    -(ψ / (1 - ψ)) * (c[0] * P[0] / (1 - n[0])) + l[0] / n[0] = 0
 
-    1 / (c[0]*P[0]) - β*P[0]*(1 - α)*exp( - α*(γ + z_e_a*e_a[x]))*k[-1] ^ α*n[0] ^ (1 - α) / (m[0]*l[0]*c[1]*P[1]) = 0
+    R[0] = P[0] * (1 - α) * exp(-α * (γ + z_e_a * e_a[x])) * k[-1]^α * n[0]^(-α) / W[0]
 
-    c[0] + k[0] = exp( - α*(γ + z_e_a*e_a[x]))*k[-1] ^ α*n[0] ^ (1 - α) + (1 - δ)*exp( - (γ + z_e_a*e_a[x]))*k[-1]
+    1 / (c[0] * P[0]) - β * P[0] * (1 - α) * exp(-α * (γ + z_e_a * e_a[x])) * k[-1]^α * n[0]^(1 - α) / (m[0] * l[0] * c[1] * P[1]) = 0
 
-    P[0]*c[0] = m[0]
+    c[0] + k[0] = exp(-α * (γ + z_e_a * e_a[x])) * k[-1]^α * n[0]^(1 - α) + (1 - δ) * exp(-(γ + z_e_a * e_a[x])) * k[-1]
+
+    P[0] * c[0] = m[0]
+
     m[0] - 1 + d[0] = l[0]
-    e[0] = exp(z_e_a*e_a[x])
-    y[0] = k[-1] ^ α*n[0] ^ (1 - α)*exp( - α*(γ + z_e_a*e_a[x]))
 
-    gy_obs[0] = dA[0]*y[0] / y[-1]
-    gp_obs[0] = (P[0] / P[-1])*m[-1] / dA[0]
+    e[0] = exp(z_e_a * e_a[x])
+
+    y[0] = k[-1]^α * n[0]^(1 - α) * exp(-α * (γ + z_e_a * e_a[x]))
+
+    gy_obs[0] = dA[0] * y[0] / y[-1]
+
+    gp_obs[0] = (P[0] / P[-1]) * m[-1] / dA[0]
+
     log_gy_obs[0] = log(gy_obs[0])
+
     log_gp_obs[0] = log(gp_obs[0])
 
 end
@@ -133,98 +136,102 @@ end
 
 ```{julia}
 # %% define parameters
-@parameters FS2000 begin
-    α     = 0.356
-    β     = 0.993
-    γ     = 0.0085
-    mst   = 1.0002
-    ρ     = 0.129
-    ψ     = 0.65
-    δ     = 0.01
+MacroModelling.@parameters FS2000 begin
+    α = 0.356
+    β = 0.993
+    γ = 0.0085
+    mst = 1.0002
+    ρ = 0.129
+    ψ = 0.65
+    δ = 0.01
     z_e_a = 0.035449
     z_e_m = 0.008862
 end
+
 ```
 
 ```{julia}
+#============================SET UP SAMPLER=============================#
 # %% Sampling imports
 import Turing
-import Turing: NUTS, sample, logpdf, replacenames
+import Turing: NUTS
 
-import ADTypes: AutoZygote
-import Zygote
+import MacroModelling: Beta, Normal, InverseGamma
+
 ```
 
 Note: Turing.jl is the julia workhorse for probabilistic programming and sampling. MacroModelling.jl is designed to work well with Turing. A solved MacroModel provides a defined log likelihood function which feeds into Turing nicely.
 
-Turing itself, in turn, works well with Zygote.jl: the principle automatic differentiating engine in Julia. Zygote enables the No U-Turn Sampler (NUTS) that automatically chooses the optimal step size for the sampler, and allows for convergence in significantly fewer samples than Metropolis Hastings. 
-
-Workflow becomes: 
+Workflow becomes:
 1. Define model, parameters, solve for steady state, linearize with MacroModelling.jl. MacroModelling.jl provides a kalman-filter log likelihood function with `get_loglikelihood(mode, data, parameters)`
 2. Feed the custom log likelihood function to Turing.jl. Assuming the solved model's likelihood is first order differentiable, specify the sampler as NUTS
-3. Select ~1000 samples with NUTS to describe posterior space with
+3. Select ~1000 samples with NUTS to describe posterior space with.
 
 ```{julia}
 #| output: false
-# %% define prior dists
+# %% Specify prior distributions
 prior_dists = [
-    Beta(0.356, 0.02, μσ = true),           # \alpha
-    Beta(0.993, 0.002, μσ = true),          # \beta
-    Normal(0.0085, 0.003),                  # \gamma
+    Beta(0.356, 0.02, μσ=true),           # α
+    Beta(0.993, 0.002, μσ=true),          # β
+    Normal(0.0085, 0.003),                  # γ
     Normal(1.0002, 0.007),                  # mst
-    Beta(0.129, 0.223, μσ = true),          # \rho
-    Beta(0.65, 0.05, μσ = true),            # \psi
-    Beta(0.01, 0.005, μσ = true),           # \delta
-    InverseGamma(0.035449, Inf, μσ = true), # z_e_a
-    InverseGamma(0.008862, Inf, μσ = true)  # z_e_m
-]
+    Beta(0.129, 0.223, μσ=true),          # ρ
+    Beta(0.65, 0.05, μσ=true),            # ψ
+    Beta(0.01, 0.005, μσ=true),           # δ
+    InverseGamma(0.035449, Inf, μσ=true), # z_e_a
+    InverseGamma(0.008862, Inf, μσ=true)  # z_e_m
+];
 ```
 
 ^ From Schorfheide 2000
 
 ```{julia}
-
 #| output: false
 # %% define sampling model
 Turing.@model function FS2000_loglik_func(prior_dists, data, m; verbose=false)
 
     parameters ~ Turing.arraydist(prior_dists)
 
-    Turing.@addlogprob! get_loglikelihood(m, data, parameters)
+    Turing.@addlogprob! MacroModelling.get_loglikelihood(m, data, parameters)
 end
 
-# %% Fit priors, data, model
-FS2000_loglik = FS2000_loglik_func(prior_dists, data, FS2000) ;
-```
-
-```{julia}
-
-#| output: false
-# %% Sampler: NUTS
+# %% Specify sampler parameters
+FS2000_loglik = FS2000_loglik_func(prior_dists, data, FS2000);
 n_samples = 1000
-
-chain_NUTS = sample(FS2000_loglik, NUTS(), n_samples, initial_params = FS2000.parameter_values)
+sample_method = NUTS() #DSGE models usually differentiable
 ```
 
 ```{julia}
+#| output: false
+# %% sample
+chain_NUTS = cache_or_compute("assets/cache/chain_NUTS.jls") do
+    Turing.sample(FS2000_loglik,
+        sample_method,
+        n_samples,
+        initial_params=FS2000.parameter_values)
+end
+```
 
-# %% Inspecting Posterior, preparing for plot
-using StatsPlots
+```{julia}
+#| output: false
+#============================MAKING SENSE OF POSTERIOR=============================#
+# %% Inspection Imports
+import StatsPlots: plot, savefig
+import MacroModelling: get_parameters
+import Turing: replacenames
+
+# %% replacing posterior names
 paramlist = get_parameters(FS2000)
 chain_NUTS_rn = replacenames(chain_NUTS, Dict(["parameters[$i]" for i in 1:length(paramlist)] .=> get_parameters(FS2000)))
-
-describe(chain_NUTS_rn)
 ```
 
 ```{julia}
-
-# %%
+#| output: false
+# %% plot
 chain_NUTS_plot = plot(chain_NUTS_rn)
 
 # %%
 savefig(chain_NUTS_plot, "assets/plots/chain_NUTS_plot.png")
-
-chain_NUTS_rn
 ```
 
 ![[../assets/plots/chain_NUTS_plot.png]]
@@ -246,7 +253,7 @@ priors can reduce sample identification problems but cannot fix poorly condition
 
 ## Parallel Tempering in a nutshell
 
-Designed to not hide identification problems, which Bayesian methods usually do. Works best with high-dimensional, multimodal, and weakly identified models. 
+Designed to not hide identification problems, which Bayesian methods usually do. Works best with high-dimensional, multimodal, and weakly identified models.
 
 ![[../../Pasted image 20260511155135.png]]
 
@@ -269,12 +276,12 @@ scans   Λ      time(s)  allc(B)  log(Z₁/Z₀)  min(α)  mean(α)  min(αₑ) 
 
 working papers --> current
 
-1. Currency dominance, exchange rates. No research assistant, no overlap. Paper in revision stage. 
-	1. Currency dominance specifically: in syllabus because GC in discussion (embryonal stage) too early. 
-2. canova and sala: identification. 
-	1. Topic for an econometrician. Anyone in mind? HEC? Can work alongside an econometrician. Co-supervisor. 
+1. Currency dominance, exchange rates. No research assistant, no overlap. Paper in revision stage.
+	1. Currency dominance specifically: in syllabus because GC in discussion (embryonal stage) too early.
+2. canova and sala: identification.
+	1. Topic for an econometrician. Anyone in mind? HEC? Can work alongside an econometrician. Co-supervisor.
 
-More space for assistant. 
+More space for assistant.
 
 ### project:
 - early stage
@@ -285,20 +292,20 @@ More space for assistant.
 - Theme: technology adoption/AI shocks. what happens in economy when there are AI shocks
 	- AI shocks == delta in production function, capital more productive than labour. what happens in economy? What should policy makers do?
 - Current stage:
-	- objective of empirical part: identify AI shocks, technology adoption in context of VAR. theory says we should look at capital share / labour share. renumeration to production input. Payments to capital should increase relative to labour. 
+	- objective of empirical part: identify AI shocks, technology adoption in context of VAR. theory says we should look at capital share / labour share. renumeration to production input. Payments to capital should increase relative to labour.
 
 Involvement could be in one of two:
 1. developing a measure of payment to capital as a % of output. capital share.
 	1. construct this object at a quarterly frequency. Put it with VAR with other vars. Identify shocks in mind.
-	2. Read: what GC sends. Barkai 2020. JF. He does this at an annual frequency. Need quarterly frequency. Using his methodology. His focus is more the long run + methodological frequency. GC has proxies, alternatives. 
+	2. Read: what GC sends. Barkai 2020. JF. He does this at an annual frequency. Need quarterly frequency. Using his methodology. His focus is more the long run + methodological frequency. GC has proxies, alternatives.
 	3. update Barkai's work, extend to quarterly frequency. Things are done up until here. Need to be understood, verified, stresstested, etc...
 
-First part: learn about national accounts, how we make sense of economic data, etc... (code revision?) Code in Python. Simplify the code, optimize. Based off code from Barkai. Can read code in R as well. Would need to compare/contrast translation from original. 
+First part: learn about national accounts, how we make sense of economic data, etc... (code revision?) Code in Python. Simplify the code, optimize. Based off code from Barkai. Can read code in R as well. Would need to compare/contrast translation from original.
 	review code, code translation, with the economic data and accounts in mind
-	understand how this code is computed and used at annual frequency. 
+	understand how this code is computed and used at annual frequency.
 
 Reward (besides $ and work)
 - separate application for my thesis potentially. Something similar/related for Canada specifically. Interaction mainly with Giacomo. Build up professional relationship with him.
-- 10 - 15 hrs/week. 
+- 10 - 15 hrs/week.
 
 Could get access to python code.
