@@ -1,0 +1,13 @@
+---
+author: Emad Saberi
+title: Demonstrating DSGE modelling while sampling with Pigeons.jl
+date: 2026/05/13
+format:
+ html:
+  embed-resources: true
+  theme: simplex
+---
+
+_For presentation to Dr. Giacomo Candian_
+
+# Parallel Tempering in DSGE with Turing.jl
