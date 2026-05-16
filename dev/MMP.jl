@@ -136,3 +136,22 @@ FS2017_CHAIN_plot = plot(FS2017_CHAIN_rn)
 savefig(FS2017_CHAIN_plot, "assets/plots/FS2017_CHAIN_plot.png")
 
 # %%
+#============================PARALLEL TEMPERING=============================#
+# %% Import Pigeons stuff
+
+import DynamicPPL, Pigeons
+
+# %% specify Pigeons-compatible likelihood function
+DynamicPPL.@model function FS2017_pigeons_loglik_func(prior_dists, data, m; verbose=false)
+    parameters ~ Turing.arraydist(prior_dists)
+    if DynamicPPL.leafcontext(__context__) !== DynamicPPL.PriorContext()
+        DynamicPPL.@addlogprob! MacroModelling.get_loglikelihood(m, data, parameters)
+    end
+end
+# %%
+
+FS2017_pigeons_loglik = FS2017_pigeons_loglik_func(prior_dists, data, FS2017);
+FS2017_pigeons_target = Pigeons.TuringLogPotential(FS2017_pigeons_loglik)
+FS2017_pigeons = Pigeons.pigeons(target=FS2017_pigeons_target)
+
+# %%
