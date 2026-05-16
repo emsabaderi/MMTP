@@ -5,6 +5,7 @@ pwd()
 run(`julia --version`)
 using Pkg
 Pkg.activate(".")
+Pkg.instantiate()
 Pkg.status()
 
 # %% General Imports
@@ -17,10 +18,9 @@ include("utils/MMTutils.jl");
 # %%
 #========================DATA TRANSFORMATIONS=============================#
 # %% packages
-using AxisKeys
+using AxisKeys, DataFrames
 
 import CSV: read
-import DataFrames: DataFrame, describe
 
 # %% load data
 dat = read("assets/data/FS2000_data.csv", DataFrame);
