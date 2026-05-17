@@ -1,19 +1,21 @@
+# Setup file for Parallel Tempering with ChildProcesses in Pigeons
+
 #===================SETUP ENVIRONMENT=====================#
 # %% Version info
-cd(joinpath("..",".."))
-pwd()
-run(`julia --version`)
+cd(expanduser("~/.julia/dev/MMTP"))
+# run(`julia --version`)
+
 using Pkg
 Pkg.activate(".")
-Pkg.instantiate()
-Pkg.status()
+# Pkg.instantiate()
+# Pkg.status()
 
 # %% General Imports
 using Serialization, Revise
 
 import PrettyTables: pretty_table
 
-include("utils/MMTutils.jl");
+include("utils/utils.jl");
 
 # %%
 #========================DATA TRANSFORMATIONS=============================#
@@ -24,7 +26,7 @@ import CSV: read
 
 # %% load data
 dat = read("assets/data/FS2000_data.csv", DataFrame);
-dat |> describe |> pretty_table
+# dat |> describe |> pretty_table
 
 # %% Transform to KeyedArray
 data = KeyedArray(Array(dat)',
@@ -37,8 +39,7 @@ data = log.(data);
 
 # %% declare observables
 observables = sort(Symbol.("log_" .* names(dat)));
-data = data(observables, :)
-# describe(data)
+data = data(observables, :);
 
 # %%
 #========================INITIALIZE MACROMODEL=============================#
@@ -94,7 +95,7 @@ MacroModelling.@parameters FS2000 begin
 end
 
 # %%
-#============================SET UP SAMPLER=============================#
+#============================SET UP TURING (NUTS) SAMPLER=============================#
 # %% Sampling imports
 import Turing
 import Turing: NUTS
@@ -107,50 +108,13 @@ import MacroModelling: Beta, Normal, InverseGamma
 
 # %% Specify prior distributions
 prior_dists = [
-    Beta(0.356, 0.02, μσ=true),           # α
-    Beta(0.993, 0.002, μσ=true),          # β
-    Normal(0.0085, 0.003),                  # γ
-    Normal(1.0002, 0.007),                  # mst
-    Beta(0.129, 0.223, μσ=true),          # ρ
-    Beta(0.65, 0.05, μσ=true),            # ψ
-    Beta(0.01, 0.005, μσ=true),           # δ
-    InverseGamma(0.035449, Inf, μσ=true), # z_e_a
-    InverseGamma(0.008862, Inf, μσ=true)  # z_e_m
+    Beta(0.356, 0.02, μσ=true),                         # α
+    Beta(0.993, 0.002, μσ=true),                        # β
+    Normal(0.0085, 0.003),                              # γ
+    Normal(1.0002, 0.007),                              # mst
+    Beta(0.129, 0.223, 1e-4, 1.0 - 1e-4, μσ=true),    # ρ
+    Beta(0.65, 0.05, μσ=true),                          # ψ
+    Beta(0.01, 0.005, μσ=true),                         # δ
+    InverseGamma(0.035449, Inf, μσ=true),               # z_e_a
+    InverseGamma(0.008862, Inf, μσ=true)                # z_e_m
 ];
-
-# %% define sampling model
-Turing.@model function FS2000_loglik_func(prior_dists, data, m; verbose=false)
-
-    parameters ~ Turing.arraydist(prior_dists)
-
-    Turing.@addlogprob! MacroModelling.get_loglikelihood(m, data, parameters)
-end
-
-# %% Specify sampler parameters
-FS2000_loglik = FS2000_loglik_func(prior_dists, data, FS2000);
-n_samples = 1000
-sample_method = NUTS() #DSGE models usually differentiable
-
-# %% sample
-chain_NUTS = cache_or_compute("assets/cache/chain_NUTS.jls") do
-    Turing.sample(FS2000_loglik,
-        sample_method,
-        n_samples,
-        initial_params=FS2000.parameter_values)
-end
-
-# %%
-#============================MAKING SENSE OF POSTERIOR=============================#
-# %% Inspection Imports
-import StatsPlots: plot, savefig
-import MacroModelling: get_parameters
-import Turing: replacenames
-
-# %% replacing posterior names
-paramlist = get_parameters(FS2000)
-chain_NUTS_rn = replacenames(chain_NUTS, Dict(["parameters[$i]" for i in 1:length(paramlist)] .=> get_parameters(FS2000)))
-# %% plot
-chain_NUTS_plot = plot(chain_NUTS_rn)
-
-# %%
-savefig(chain_NUTS_plot, "assets/plots/chain_NUTS_plot.png")

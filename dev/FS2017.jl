@@ -55,7 +55,7 @@ end
 
 # %% define parameters
 MacroModelling.@parameters FS2017 begin
-    rA = 025
+    rA = 0.25
     πA = 5.0
     γQ = 0.2
 
@@ -76,10 +76,12 @@ end
 #============================SET UP SAMPLER=============================#
 # %% Sampling imports
 import Turing
-import Turing: NUTS
-
+import DynamicPPL
+import Pigeons
 import MacroModelling: Gamma, Normal, InverseGamma
 import Distributions: Uniform
+
+using Random
 
 # %% Specify prior distributions
 prior_dists = [
@@ -99,59 +101,52 @@ prior_dists = [
 ];
 
 # %% define sampling model
-Turing.@model function FS2017_loglik_func(prior_dists, data, m; verbose=false)
+Turing.@model function FS2017_loglik_func(data, m, on_loglik_fail)
     parameters ~ Turing.arraydist(prior_dists)
 
-    Turing.@addlogprob! MacroModelling.get_loglikelihood(m, data, parameters)
-end
-
-# %% Specify sampler parameters
-FS2017_loglik = FS2017_loglik_func(prior_dists, data, FS2017);
-n_samples = 1000
-sample_method = NUTS()
-
-# %% sample
-FS2017_CHAIN = cache_or_compute("assets/cache/FS2017_CHAIN.jls") do
-    Turing.sample(FS2017_loglik,
-        sample_method,
-        n_samples,
-        initial_params=FS2017.parameter_values)
-end
-
-# %%
-#============================MAKING SENSE OF POSTERIOR=============================#
-# %% Inspection Imports
-import StatsPlots: plot, savefig
-import MacroModelling: get_parameters
-import Turing: replacenames
-
-# %% replacing posterior names
-paramlist = get_parameters(FS2017)
-FS2017_CHAIN_rn = replacenames(FS2017_CHAIN, Dict(["parameters[$i]" for i in 1:length(paramlist)] .=> get_parameters(FS2017)))
-
-# %% plot
-FS2017_CHAIN_plot = plot(FS2017_CHAIN_rn)
-
-# %%
-savefig(FS2017_CHAIN_plot, "assets/plots/FS2017_CHAIN_plot.png")
-
-# %%
-#============================PARALLEL TEMPERING=============================#
-# %% Import Pigeons stuff
-
-import DynamicPPL, Pigeons
-
-# %% specify Pigeons-compatible likelihood function
-DynamicPPL.@model function FS2017_pigeons_loglik_func(prior_dists, data, m; verbose=false)
-    parameters ~ Turing.arraydist(prior_dists)
     if DynamicPPL.leafcontext(__context__) !== DynamicPPL.PriorContext()
-        DynamicPPL.@addlogprob! MacroModelling.get_loglikelihood(m, data, parameters)
+        Turing.@addlogprob! MacroModelling.get_loglikelihood(m, data, parameters, on_failure_loglikelihood=on_loglik_fail)
     end
 end
+
+# %% Pigeons initialization
+
+FS2017_lp = Pigeons.TuringLogPotential(FS2017_loglik_func(data, FS2017, -floatmax(Float64) + 1e10))
+
+init_params = FS2017.parameter_values
+PIGEONS_SEED = 30
+
+FS2017_LP = typeof(FS2017_lp)
+
+function Pigeons.initialization(target::FS2017_LP, rng::AbstractRNG, _::Int64)
+    result = DynamicPPL.VarInfo(rng, target.model, DynamicPPL.SampleFromPrior(), DynamicPPL.PriorContext())
+
+    result = DynamicPPL.initialize_parameters!!(result, init_params, target.model)
+
+    return result
+end
+
+# %% Pigeons sample
+
+pt = Pigeons.pigeons(target=FS2017_lp, n_rounds=0, n_chains=1, seed=PIGEONS_SEED)
+
 # %%
 
-FS2017_pigeons_loglik = FS2017_pigeons_loglik_func(prior_dists, data, FS2017);
-FS2017_pigeons_target = Pigeons.TuringLogPotential(FS2017_pigeons_loglik)
-FS2017_pigeons = Pigeons.pigeons(target=FS2017_pigeons_target)
+pt2 = Pigeons.pigeons(
+    target=FS2017_lp,
+    record=[Pigeons.traces; Pigeons.round_trip; Pigeons.record_default()],
+    n_chains=10,
+    n_rounds=10,
+    seed=PIGEONS_SEED,
+    multithreaded=false
+)
 
 # %%
+
+import MCMCChains
+using StatsPlots
+# %%
+
+samps = MCMCChains.Chains(pt2);
+sampsplot = plot(samps)
+savefig(sampsplot, "assets/plots/samps.png")
