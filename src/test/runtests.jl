@@ -1,6 +1,6 @@
-using TuringPigeons
+using MMTP
 using Test
 
-@testset "TuringPigeons.jl" begin
+@testset "MMTP.jl" begin
     # Write your tests here.
 end
