@@ -2,26 +2,21 @@
 
 #===================SETUP ENVIRONMENT=====================#
 # %% Version info
-cd(expanduser("~/.julia/dev/MMTP"))
+# cd(expanduser("~/.julia/dev/MMTP"))
 # run(`julia --version`)
 
-using Pkg
-Pkg.activate(".")
+# using Pkg
+# Pkg.activate(".")
+# Pkg.resolve()
 # Pkg.instantiate()
 # Pkg.status()
 
 # %% General Imports
-using Serialization, Revise
-
 import PrettyTables: pretty_table
-
-include("utils/utils.jl");
 
 # %%
 #========================DATA TRANSFORMATIONS=============================#
 # %% packages
-using AxisKeys, DataFrames
-
 import CSV: read
 
 # %% load data
@@ -43,10 +38,10 @@ data = data(observables, :);
 
 # %%
 #========================INITIALIZE MACROMODEL=============================#
-import MacroModelling
+import MacroModelling as MM
 
 # %% define model
-MacroModelling.@model FS2000 begin
+MM.@model FS2000 begin
     dA[0] = exp(γ + z_e_a * e_a[x])
 
     log(m[0]) = (1 - ρ) * log(mst) + ρ * log(m[-1]) + z_e_m * e_m[x]
@@ -82,7 +77,7 @@ MacroModelling.@model FS2000 begin
 end
 
 # %% define parameters
-MacroModelling.@parameters FS2000 begin
+MM.@parameters FS2000 begin
     α = 0.356
     β = 0.993
     γ = 0.0085
@@ -96,10 +91,7 @@ end
 
 # %%
 #============================SET UP TURING (NUTS) SAMPLER=============================#
-# %% Sampling imports
-import Turing
-import Turing: NUTS
-
+# %% Setup prior distributions array
 import MacroModelling: Beta, Normal, InverseGamma
 
 # %% define prior dists
@@ -112,9 +104,32 @@ prior_dists = [
     Beta(0.993, 0.002, μσ=true),                        # β
     Normal(0.0085, 0.003),                              # γ
     Normal(1.0002, 0.007),                              # mst
-    Beta(0.129, 0.223, 1e-4, 1.0 - 1e-4, μσ=true),    # ρ
+    Beta(0.129, 0.223, 1e-4, 1.0 - 1e-4, μσ=true),      # ρ
     Beta(0.65, 0.05, μσ=true),                          # ψ
     Beta(0.01, 0.005, μσ=true),                         # δ
     InverseGamma(0.035449, Inf, μσ=true),               # z_e_a
     InverseGamma(0.008862, Inf, μσ=true)                # z_e_m
 ];
+
+# %%
+#============================SET UP TURING AND PIGEONS SAMPLER=============================#
+# %% Sampler imports
+import Turing: NUTS
+
+# for posterior analysis
+import StatsPlots: plot, savefig
+
+# %% Define PT-compatible Sampler function
+Turing.@model function FS2000_loglik_func(prior_dists, data, m, on_loglik_failure; verbose=false)
+    parameters ~ Turing.arraydist(prior_dists)
+
+    if DPPL.leafcontext(__context__) !== DPPL.PriorContext()
+        llh = MM.get_loglikelihood(m, data, parameters, on_failure_loglikelihood=on_loglik_failure)
+
+        if verbose
+            @info "Loglikelihood: $llh and prior llh: $(Turing.logpdf(Turing.arraydist(prior_dists), parameters)) with params $parameters"
+        end
+
+        Turing.@addlogprob! llh
+    end
+end
