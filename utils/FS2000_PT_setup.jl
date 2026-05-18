@@ -7,37 +7,31 @@
 
 # using Pkg
 # Pkg.activate(".")
-# Pkg.resolve()
 # Pkg.instantiate()
+# Pkg.resolve()
 # Pkg.status()
 
 # %% General Imports
-import PrettyTables: pretty_table
+# include("utils.jl");
 
 # %%
 #========================DATA TRANSFORMATIONS=============================#
-# %% packages
+# %% imports
 import CSV: read
+using AxisKeys, DataFrames
 
 # %% load data
-dat = read("assets/data/FS2000_data.csv", DataFrame);
-# dat |> describe |> pretty_table
+dat = read("assets/data/FS2000_data.csv", DataFrame)
 
 # %% Transform to KeyedArray
 data = KeyedArray(Array(dat)',
-    Variable=Symbol.("log_" .* names(dat)),
+    Variable=Symbol.(names(dat)),
     Time=1:size(dat, 1)
 );
 
-# %% logs
-data = log.(data);
-
-# %% declare observables
-observables = sort(Symbol.("log_" .* names(dat)));
-data = data(observables, :);
-
 # %%
 #========================INITIALIZE MACROMODEL=============================#
+# %% imports
 import MacroModelling as MM
 
 # %% define model
@@ -92,13 +86,16 @@ end
 # %%
 #============================SET UP TURING (NUTS) SAMPLER=============================#
 # %% Setup prior distributions array
-import MacroModelling: Beta, Normal, InverseGamma
+# import MacroModelling: Beta, Normal, InverseGamma
 
 # %% define prior dists
 # MacroModelling instead of Distributions because parameter distribution moments we have need transforming.
 # Distributions expects α and β for Beta dists. We have μ and σ. MacroModelling.Beta transforms them, etc...
 
 # %% Specify prior distributions
+import Turing
+import MacroModelling: Beta, Normal, InverseGamma
+
 prior_dists = [
     Beta(0.356, 0.02, μσ=true),                         # α
     Beta(0.993, 0.002, μσ=true),                        # β
@@ -114,10 +111,7 @@ prior_dists = [
 # %%
 #============================SET UP TURING AND PIGEONS SAMPLER=============================#
 # %% Sampler imports
-import Turing: NUTS
-
-# for posterior analysis
-import StatsPlots: plot, savefig
+import DynamicPPL as DPPL
 
 # %% Define PT-compatible Sampler function
 Turing.@model function FS2000_loglik_func(prior_dists, data, m, on_loglik_failure; verbose=false)
@@ -132,4 +126,27 @@ Turing.@model function FS2000_loglik_func(prior_dists, data, m, on_loglik_failur
 
         Turing.@addlogprob! llh
     end
+end
+
+failure_pen = -floatmax(Float64) + 1e10
+FS2000_loglik_pop = FS2000_loglik_func(prior_dists, data, FS2000, failure_pen)
+
+# %%
+#============================PIGEONS INITIALIZATION=============================#
+# %% imports
+using Random
+import Pigeons
+
+# %% Pigeons logpotential
+init_params = FS2000.parameter_values
+FS2000_PT_lp = Pigeons.TuringLogPotential(FS2000_loglik_pop)
+typeof_FS2000_PT_LP = typeof(FS2000_PT_lp)
+
+# %% Pigeons initialization
+function Pigeons.initialization(target::typeof_FS2000_PT_LP, rng::AbstractRNG, _::Int64)
+    result = DPPL.VarInfo(rng, target.model, DPPL.SampleFromPrior(), DPPL.PriorContext())
+
+    result = DPPL.initialize_parameters!!(result, init_params, target.model)
+
+    return result
 end
