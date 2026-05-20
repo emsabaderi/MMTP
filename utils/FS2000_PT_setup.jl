@@ -17,6 +17,9 @@
 # %%
 #========================DATA TRANSFORMATIONS=============================#
 # %% imports
+using LinearAlgebra
+
+BLAS.set_num_threads(1)
 import CSV: read
 using AxisKeys, DataFrames
 
@@ -69,6 +72,59 @@ MM.@model FS2000 begin
     log_gp_obs[0] = log(gp_obs[0])
 
 end
+
+# %% custom steady state - necessary for ChildProcesses speedup
+# function FS2000_custom_steady_state_function!(ss, parameters)
+#     α, β, γ, mst, ρ, ψ, δ, z_e_a, z_e_m = parameters  # must match @parameters order
+
+#     dA = exp(γ)
+#     gst = 1 / dA
+#     m = mst
+
+#     khst = ((1 - gst * β * (1 - δ)) / (α * gst^α * β))^(1 / (α - 1))
+#     xist = (((khst * gst)^α - (1 - gst * (1 - δ)) * khst) / mst)^(-1)
+#     nust = ψ * mst^2 / ((1 - α) * (1 - ψ) * β * gst^α * khst^α)
+#     n = xist / (nust + xist)
+#     P = xist + nust
+#     k = khst * n
+
+#     l = ψ * mst * n / ((1 - ψ) * (1 - n))
+#     c = mst / P
+#     d = l - mst + 1
+#     y = k^α * n^(1 - α) * gst^α
+#     R = mst / β
+#     W = l / n
+#     e = 1.0
+
+#     gp_obs = m / dA
+#     gy_obs = dA
+#     log_gp_obs = log(gp_obs)
+#     log_gy_obs = log(gy_obs)
+
+#     if length(ss) != 16
+#         resize!(ss, 16)
+#     end
+
+#     # Variables stored in alphabetical order
+#     ss[1] = P
+#     ss[2] = R
+#     ss[3] = W
+#     ss[4] = c
+#     ss[5] = d
+#     ss[6] = dA
+#     ss[7] = e
+#     ss[8] = gp_obs
+#     ss[9] = gy_obs
+#     ss[10] = k
+#     ss[11] = l
+#     ss[12] = log_gp_obs
+#     ss[13] = log_gy_obs
+#     ss[14] = m
+#     ss[15] = n
+#     ss[16] = y
+
+#     return ss
+# end
 
 # %% define parameters
 MM.@parameters FS2000 begin
@@ -128,7 +184,7 @@ Turing.@model function FS2000_loglik_func(prior_dists, data, m, on_loglik_failur
     end
 end
 
-failure_pen = -floatmax(Float64) + 1e10
+failure_pen = -1e10
 FS2000_loglik_pop = FS2000_loglik_func(prior_dists, data, FS2000, failure_pen)
 
 # %%

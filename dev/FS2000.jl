@@ -6,11 +6,11 @@ run(`julia --version`)
 using Pkg
 Pkg.activate(".")
 Pkg.instantiate()
-# Pkg.resolve()
+Pkg.resolve()
 # Pkg.status()
 
 # %% Imports
-using Revise
+using Revise, BenchmarkTools
 
 import CondaPkg
 import Serialization: serialize, deserialize
@@ -22,7 +22,7 @@ import Pigeons
 import MCMCChains as MCMCC
 
 CondaPkg.resolve()
-include("utils.jl")
+include("utils/utils.jl")
 include("utils/FS2000_PT_setup.jl")
 # include("utils/utils.jl")
 
@@ -65,8 +65,8 @@ FS2000_PT = cache_or_compute("assets/cache/FS2000_PT_chain.jls") do
             Pigeons.round_trip;
             Pigeons.record_default()
         ],
-        n_chains=13,
-        n_rounds=12,
+        n_chains=10,
+        n_rounds=7,
         seed=PIGEONS_SEED,
         checkpoint=true,
         on=Pigeons.ChildProcess(
@@ -78,8 +78,8 @@ FS2000_PT = cache_or_compute("assets/cache/FS2000_PT_chain.jls") do
 end
 
 # %% PT chain analysis
-FS2000_PT_chain = MCMCC.Chains(FS2000_PT)
-FS2000_PT_chain_renamed = Turing.replacenames(FS2000_PT_chain, Dict(["parameters[$i]" for i in 1:length(paramlist)] .=> get_parameters(FS2000_PT)))
+FS2000_PT_chain = MCMCC.Chains(Pigeons.load(FS2000_PT))
+FS2000_PT_chain_renamed = Turing.replacenames(FS2000_PT_chain, Dict(["parameters[$i]" for i in 1:length(paramlist)] .=> MM.get_parameters(FS2000)))
 
 # %% PT plot
 FS2000_PT_chain_plot = plot(FS2000_PT_chain_renamed)
