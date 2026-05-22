@@ -1,3 +1,4 @@
+
 #===================SETUP ENVIRONMENT=====================#
 # %% Version info
 cd(expanduser("~/.julia/dev/MMTP"))
@@ -7,7 +8,7 @@ using Pkg
 Pkg.activate(".")
 Pkg.instantiate()
 Pkg.resolve()
-# Pkg.status()
+Pkg.status()
 
 # %% Imports
 using Revise, BenchmarkTools

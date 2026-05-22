@@ -1,1 +1,5 @@
 /Manifest*.toml
+
+/dev/FS2017.jl
+
+/dev/scratch.jl
