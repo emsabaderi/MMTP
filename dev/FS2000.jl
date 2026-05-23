@@ -7,7 +7,7 @@ using Pkg
 Pkg.activate(".")
 Pkg.instantiate()
 Pkg.resolve()
-# Pkg.status()
+Pkg.status()
 
 # %% Imports
 using Revise, BenchmarkTools
@@ -24,7 +24,6 @@ import MCMCChains as MCMCC
 CondaPkg.resolve()
 include("utils/utils.jl")
 include("utils/FS2000_PT_setup.jl")
-# include("utils/utils.jl")
 
 # %%
 #============================BENCHMARK: NUTS=============================#
@@ -43,11 +42,13 @@ end
 
 # %% NUTS plot
 paramlist = MM.get_parameters(FS2000)
-FS2000_NUTS_chain_renamed = Turing.replacenames(
-    FS2000_NUTS_chain,
-    Dict(["parameters[$i]" for i in 1:length(paramlist)] .=> MM.get_parameters(FS2000))
-)
+rename_map = Dict("parameters[$i]" => string(p) for (i, p) in enumerate(paramlist))
 
+FS2000_NUTS_chain_renamed = MCMCC.replacenames(FS2000_NUTS_chain, rename_map)
+
+MCMCC.summarize(FS2000_NUTS_chain_renamed)
+
+# %%
 FS2000_NUTS_chain_plot = plot(FS2000_NUTS_chain_renamed)
 savefig(FS2000_NUTS_chain_plot, "assets/plots/FS2000_NUTS_chain_plot.png")
 
@@ -57,7 +58,7 @@ savefig(FS2000_NUTS_chain_plot, "assets/plots/FS2000_NUTS_chain_plot.png")
 PIGEONS_SEED = 123
 
 # %% Parallel Tempering Sampler
-FS2000_PT = cache_or_compute("assets/cache/FS2000_PT_chain.jls") do
+FS2000_PT = pt_cache_or_compute("assets/cache/FS2000_PT_chain") do
     Pigeons.pigeons(
         target=FS2000_PT_lp,
         record=[
@@ -76,15 +77,18 @@ FS2000_PT = cache_or_compute("assets/cache/FS2000_PT_chain.jls") do
         )
     )
 end
+# %%
+FS2000_PT |> typeof
 
 # %% PT chain analysis
-FS2000_PT_load = Pigeons.load(FS2000_PT)
-FS2000_PT_chain = MCMCC.Chains(FS2000_PT_load)
+# FS2000_PT_load = Pigeons.load(FS2000_PT)
+FS2000_PT_chain = MCMCC.Chains(FS2000_PT)
 FS2000_PT_chain_renamed = Turing.replacenames(FS2000_PT_chain, Dict(["parameters[$i]" for i in 1:length(paramlist)] .=> MM.get_parameters(FS2000)))
 
 # %% PT sampler plot
 FS2000_PT_chain_plot = plot(FS2000_PT_chain_renamed)
 savefig(FS2000_PT_chain_plot, "assets/plots/FS2000_PT_chain_plot.png")
+
 # %% PT restarts, barrier plot
 using Interpolations
 Λ = FS2000_PT_load.shared.tempering.communication_barriers.globalbarrier

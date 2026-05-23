@@ -1,0 +1,24 @@
+/* Minimal style overrides — keep the cosmo theme but tighten code blocks */
+
+pre.sourceCode {
+  font-size: 0.88em;
+  line-height: 1.4;
+}
+
+pre.cell-output {
+  font-size: 0.88em;
+  background-color: #fafafa;
+  border-left: 3px solid #d0d0d0;
+  padding-left: 0.75em;
+}
+
+.cell-output-display img {
+  max-width: 100%;
+  height: auto;
+}
+
+blockquote {
+  border-left: 4px solid #4A8FBD;
+  background-color: #f5f9fc;
+  padding: 0.5em 1em;
+}

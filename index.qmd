@@ -1,0 +1,315 @@
+---
+title: "Parallel Tempering as an Identification Diagnostic for Bayesian DSGE Models"
+subtitle: "Proof of Concept — the FS2000 Baseline"
+author: "Emad Saberi"
+date: today
+abstract: |
+  This document presents a working proof of concept for using parallel tempering (PT) —
+  specifically the modern PT diagnostics exposed by Pigeons.jl — as a Bayesian counterpart
+  to existing analytical identification tests for DSGE models. We replicate the well-known
+  Schorfheide (2000) FS2000 monetary model in Julia (MacroModelling.jl + Turing.jl + Pigeons.jl),
+  compare NUTS and PT posterior estimates, and read the global and local communication
+  barriers as quantitative summaries of identification quality. FS2000 serves as the
+  *well-identified baseline* against which weakly- or partially-identified specifications
+  will be compared in subsequent work.
+---
+
+# Background
+
+## What is a DSGE model?
+
+Dynamic Stochastic General Equilibrium (DSGE) models represent macroeconomies as systems of equations derived from microfounded optimization problems: households maximizing intertemporal utility, firms maximizing profits, markets clearing in equilibrium, a central bank setting policy. The resulting non-linear equilibrium conditions are typically:
+
+1. **Solved for the deterministic steady state** — the equilibrium that prevails when all stochastic shocks are zero.
+2. **Log-linearized** around that steady state to obtain a linear system of rational-expectations equations.
+3. **Cast in state-space form** $s_t = \Phi_1(\theta)\,s_{t-1} + \Phi_\epsilon(\theta)\,\epsilon_t$, $y_t = \Psi_0(\theta) + \Psi_1(\theta)\,s_t$, enabling likelihood evaluation via the Kalman filter.
+4. **Estimated by Bayesian methods**: priors on the structural parameters $\theta$ — preferences, technology, policy rule coefficients, shock standard deviations — are combined with the likelihood through MCMC, historically random-walk Metropolis–Hastings and more recently Hamiltonian variants such as the No-U-Turn Sampler.
+
+DSGE models are central to monetary policy analysis at major central banks and are used for forecasting, counterfactual policy analysis, and the structural decomposition of business-cycle fluctuations. Textbook treatments include @herbst2016bayesian and @an2007bayesian.
+
+## Identification problems in DSGE estimation
+
+@canova2009back identify three distinct identification pathologies that pervade medium- and large-scale DSGE models:
+
+1. **Observational equivalence (under-identification).** Different parameter vectors $\theta_1 \neq \theta_2$ generate identical likelihoods $p(y \mid \theta_1) = p(y \mid \theta_2)$. The structural-parameters-to-observable-moments mapping is many-to-one, and no amount of additional data can distinguish $\theta_1$ from $\theta_2$.
+
+2. **Partial identification.** Only certain functions or combinations of parameters are pinned down by the data. The likelihood is informative in some directions of $\theta$-space and flat in others.
+
+3. **Weak identification.** Identification is technically present but poorly informed by the data — the likelihood has nearly-flat ridges, and small perturbations in the data produce disproportionately large changes in parameter estimates.
+
+These problems are not edge cases: as DSGE models add propagation mechanisms and shocks to better match the data, the parameter space expands faster than the information content of typical macro samples (quarterly observations over a few decades).
+
+## How identification is currently checked in practice
+
+Three families of techniques are common.
+
+- **Pre-estimation analytical tests.** @iskrev2010local: rank conditions on the Jacobian of the model-implied moment mapping; @komunjer2011dynamic provide spectral-density-based tests; @canova2009back themselves develop local sensitivity diagnostics. These tools are powerful but local-linear, Gaussian-asymptotic, and silent about non-local pathologies like multimodality.
+
+- **Post-estimation informal checks.** Comparing prior-to-posterior moments and shapes (a posterior that closely tracks the prior signals weak identification); running multiple chains from different starting points and inspecting consistency; visually examining bivariate posterior plots for ridges.
+
+- **Robustness checks.** Reporting estimates under alternative prior specifications and data subsamples.
+
+Each approach has its limitation. Analytical tests assume a regularity environment, and DSGE posteriors may not satisfy them. Informal checks don't have quantitative summaries that travel across models. Multiple-chain starting-point checks mix up identification problems with ordinary sampler convergence issues.
+
+## Parallel tempering and Pigeons.jl
+
+Parallel tempering (PT; originally @geyer1991markov) constructs a sequence of tempered distributions interpolating between a measurable reference and the target posterior:
+
+$$\pi_\beta(\theta) \;\propto\; \pi_{\text{ref}}(\theta)^{1-\beta}\,\pi_{\text{target}}(\theta)^{\beta}, \quad \beta \in [0,1].$$
+
+$N$ MCMC chains target $\pi_{\beta_0}, \pi_{\beta_1}, \ldots, \pi_{\beta_N}$ at grid points of a temperature schedule with $0 = \beta_0 < \beta_1 < \cdots < \beta_N = 1$. The reference chain ($\beta=0$) is by construction easy to sample (prior here) and the target chain ($\beta=N$) is the posterior of interest. Adjacent chains exchange states from Metropolis-style swap moves, allowing the posterior chain to inherit broad exploration from the prior chain.
+
+Pigeons.jl [@surjanovic2025pigeons] implements modern PT with diagnostics drawn from @syed2022nonreversible. Three quantities are central:
+
+- **Global communication barrier** $\Lambda$: an information-theoretic scalar measuring the total mixing difficulty along the prior-to-posterior path. $\Lambda$ measures, broadly, the number of chains required for efficient sampling — the rule of thumb is $N \approx 2\Lambda$ — and the expected restart rate scales as $\approx 1/(2 + 2\Lambda + \Lambda^2)$.
+
+- **Local communication barrier** $\lambda(\beta)$: shows *where* along the tempered path the mixing difficulty is concentrated, satisfying $\Lambda = \int_0^1 \lambda(\beta)\,d\beta$. Peaks near $\beta = 0$ indicate prior-posterior mismatch — the data are highly informative relative to the prior. Peaks near $\beta = 1$ indicate issues within the posterior itself — likelihood ridges, modal separation, weakly identified directions.
+
+- **Round-trip rate**: how often a replica successfully travels from $\beta = 0$ to $\beta = 1$ and back. Each round trip is functionally an independent draw from the posterior.
+
+@brault2024parallel, at the Bank of Canada, was the first to apply PT to DSGE estimation, using a MATLAB+Dynare implementation focused on multimodal posteriors. His underlying DSGE model was from Smets-Wouters under diffuse priors [@smets2007shocks; @herbst2014sequential]. The present work extends that line in two directions: a Julia implementation native to the modern probabilistic-programming ecosystem, and explicit use of the modern barrier diagnostics as *identification* tools rather than as sampler-quality measures.
+
+---
+
+# Proof of Concept: FS2000
+
+The Schorfheide (2000) FS2000 model is a small monetary DSGE with nine structural parameters and two observable series (output growth and inflation). It is well-identified, has a unique determinate equilibrium across the reasonable region of its parameter space, and has been used as a reference benchmark in the DSGE estimation literature for two decades. It is a natural baseline: we expect the barrier diagnostics to indicate a clean posterior.
+
+## Loading data, model, and priors
+
+All of the model definition, parameter calibration, prior specification, observable data, and Turing/Pigeons plumbing live in a single setup file, `utils/FS2000_PT_setup.jl`. Will discuss why everything is consolidated there in a moment (Child Processes), but for now simply load it.
+
+```{julia}
+#| echo: true
+#| eval: true
+# %% Version info
+cd(expanduser("~/.julia/dev/MMTP"))
+run(`julia --version`)
+
+using Pkg
+Pkg.activate(".")
+Pkg.instantiate()
+Pkg.resolve()
+Pkg.status()
+```
+
+```{julia}
+#| echo: true
+#| eval: true
+# %% Imports
+using Revise, BenchmarkTools
+
+import CondaPkg
+import Serialization: serialize, deserialize
+import Turing
+import Turing: NUTS
+import MacroModelling as MM
+import StatsPlots: plot, savefig
+import Pigeons
+import MCMCChains as MCMCC
+
+CondaPkg.resolve()
+include("utils/utils.jl")
+include("utils/FS2000_PT_setup.jl")
+
+println("Observables: ", AxisKeys.axiskeys(data, :Variable))
+println("Number of parameters: ", length(prior_dists))
+```
+
+## A NUTS baseline
+
+Before reaching for parallel tempering, we run NUTS (Turing.jl's default Hamiltonian sampler) as a single-chain reference. If PT does its job, the marginal posteriors from NUTS and PT should agree closely.
+
+```{julia}
+#| echo: true
+#| eval: true
+
+sample_method = NUTS()
+NUTS_n_samples = 1000
+
+FS2000_NUTS_chain = cache_or_compute("assets/cache/FS2000_NUTS_chain.jls") do
+    Turing.sample(FS2000_loglik_pop,
+        sample_method,
+        NUTS_n_samples,
+        initial_params=FS2000.parameter_values)
+end
+
+paramlist = MM.get_parameters(FS2000)
+rename_map = Dict("parameters[$i]" => string(p) for (i, p) in enumerate(paramlist))
+
+FS2000_NUTS_chain_renamed = MCMCC.replacenames(FS2000_NUTS_chain, rename_map)
+
+MCMCC.summarize(FS2000_NUTS_chain_renamed)
+```
+
+```{julia}
+#| echo: true
+#| eval: true
+#| fig-cap: "NUTS trace and posterior density plots for FS2000."
+
+plot(FS2000_NUTS_chain_renamed; size = (900, 1500))
+```
+
+The NUTS run completes cleanly in a few minutes on a single thread, with no divergence warnings and a roughly Gaussian posterior shape that closely tracks the published estimates for FS2000 in the literature. Nice.
+
+## Why the setup is split into its own file
+
+Parallel tempering can be run single-process with `multithreaded = false`, but for any non-trivial number of rounds the real time cost is steep. Pigeons.jl supports MPI-based multi-process parallelism through `ChildProcess`, in which each MCMC replica runs in its own Julia process. Two facts make this the right architecture for MacroModelling-based targets:
+
+1. **Within a single Julia process, MacroModelling's internal caches are not thread-safe.** Two threads calling `get_loglikelihood` concurrently corrupt each other's state. This is why we run with `multithreaded = false`.
+
+2. **Across separate processes, the model object is naturally per-process.** Each child Julia process loads its own copy of MacroModelling and constructs its own `FS2000` model object, so there is no shared mutable state to corrupt. Parallelism is safe at the process level even when it is not safe at the thread level.
+
+The drawback is that each child process must be able to *re-create* the full target distribution — model, priors, Turing wrapper, custom `Pigeons.initialization` method — from scratch on launch. Pigeons.jl handles this by `include`-ing a setup file in every child. That setup file must therefore be self-contained: every `import` and `using` it needs has to be at the top of the file, not in the parent script that opened the REPL. Putting the FS2000 setup in `utils/FS2000_PT_setup.jl` and using only that path as a dependency is pretty clean.
+
+## The Pigeons sampling call
+
+The PT run itself is short to write but expensive to execute (about 30–60 minutes for 7 rounds with 4 MPI processes on a modest laptop), so the cell below is echoed but not evaluated. The result has been cached separately and is loaded for plotting.
+```{julia}
+#| echo: false
+#| eval: false
+
+const PIGEONS_SEED = 123
+
+FS2000_PT = pt_cache_or_compute("assets/cache/FS2000_PT_chain") do
+    error("PT cache missing — run pigeons in the REPL first.")
+end
+```
+
+
+```{julia}
+#| echo: true
+#| eval: true
+
+const PIGEONS_SEED = 123
+
+FS2000_PT = pt_cache_or_compute("assets/cache/FS2000_PT_chain") do
+    Pigeons.pigeons(
+        target=FS2000_PT_lp,
+        record=[
+            Pigeons.traces;
+            Pigeons.round_trip;
+            Pigeons.record_default()
+        ],
+        n_chains=10,
+        n_rounds=7,
+        seed=PIGEONS_SEED,
+        checkpoint=true,
+        on=Pigeons.ChildProcess(
+            n_local_mpi_processes=4,
+            n_threads=1,
+            dependencies=[abspath("utils/FS2000_PT_setup.jl")]
+        )
+    )
+end
+```
+
+A few choices worth highlighting:
+
+- `variational = Pigeons.GaussianReference()` replaces the prior with a Gaussian fitted to early posterior draws. This pulls the reference closer to the target and reduces $\Lambda$ — for FS2000 we observe a drop from approximately $\Lambda \approx 6.6$ without it to $\Lambda \approx 5.2$ with it.
+- `multithreaded` defaults to `false`; combined with `n_threads = 1` and the `BLAS.set_num_threads(1)` at the top of the document, this avoids both Pigeons-level and BLAS-level oversubscription across the four child processes.
+- The `dependencies` vector points only to the setup file path. Every package import the children need is declared inside that file, so the children rebuild the target from scratch with no implicit dependencies on the parent process.
+
+## Loading the cached PT result
+
+```{julia}
+#| echo: true
+#| eval: true
+
+FS2000_PT_chain = MCMCC.Chains(FS2000_PT)
+FS2000_PT_chain_renamed = MCMCC.replacenames(FS2000_PT_chain, rename_map)
+MCMCC.summarize(FS2000_PT_chain_renamed)
+```
+
+## Posterior comparison
+
+```{julia}
+#| echo: true
+#| eval: true
+#| fig-cap: "Parallel-tempering posterior marginals for FS2000."
+
+plot(FS2000_PT_chain_renamed; size = (900, 1500))
+```
+
+The NUTS and PT marginal posteriors agree closely on means and credible intervals across all nine parameters. That agreement is exactly what's expected from a well-identified baseline: two qualitatively different samplers landing on the same posterior characterization. Disagreement at this stage would signal either a sampling pathology or a posterior shape that neither sampler is fully resolving.
+
+## Communication barriers
+
+```{julia}
+#| echo: true
+#| eval: true
+#| fig-cap: "Cumulative (left) and local (right) communication barriers for FS2000 with a Gaussian variational reference. Integral of the right panel equals the rightmost value of the left panel, $\\Lambda \\approx 5.2$."
+
+using Interpolations
+
+# Extract the underlying interpolation object
+localbar = FS2000_PT.shared.tempering.communication_barriers.localbarrier
+itp = getfield(localbar, first(fieldnames(typeof(localbar))))
+
+# Sample on a dense β-grid for smooth plotting
+βs                    = range(0, 1, length = 200)
+cum_barrier           = itp.(βs)
+local_barrier_density = [Interpolations.gradient(itp, β)[1] for β in βs]
+
+p1 = plot(βs, cum_barrier;
+          xlabel = "β  (tempering parameter)",
+          ylabel = "cumulative barrier  Λ(β)",
+          title  = "FS2000 — cumulative communication barrier",
+          legend = false, lw = 2)
+
+p2 = plot(βs, local_barrier_density;
+          xlabel = "β  (tempering parameter)",
+          ylabel = "local barrier  λ(β)",
+          title  = "FS2000 — local communication barrier",
+          legend = false, lw = 2)
+
+plot(p1, p2; layout = (1, 2), size = (1200, 400))
+```
+
+```{julia}
+#| echo: true
+#| eval: true
+
+Λ         = Pigeons.global_barrier(pt)
+restarts  = Pigeons.n_round_trips(pt)
+
+println("Global communication barrier  Λ = ", round(Λ, digits = 3))
+println("Total tempered restarts        = ", restarts)
+```
+
+## Reading the result: FS2000 is well-identified
+
+The local barrier curve $\lambda(\beta)$ has a single, sharp peak at $\beta = 0$ and decays rapidly: roughly half of the total cumulative barrier is accumulated in the first 5% of the tempering path, and across $[0.25, 1]$ the local barrier is essentially flat near zero. This is the geometric signature of a posterior that is concentrated relative to its prior. The data are dominant; once any non-trivial likelihood weight is applied, the posterior snaps to a tight, smooth, near-Gaussian region, and from that point on the tempered chains agree well.
+
+The contrast is what matters for the methodology. The signature I look for in an poorly identified model is the opposite: a peak or shoulder near $\beta = 1$ (difficulty at the posterior, characteristic of likelihood ridges or weakly identified directions), or multiple peaks across the interval (modal separation). FS2000 shows none of these features. Combined with the close agreement between NUTS and PT marginals, the modest $\Lambda$, and the steady accumulation of round-trip restarts across rounds, FS2000 stands as a well-identified baseline: the visual and quantitative reference against which weaker specifications will be compared.
+
+---
+
+# To Come
+
+The proof of concept above establishes the pipeline and the baseline. Three lines of empirical work follow:
+
+## 1. Comparing well- and weakly-identified specifications of the same model
+
+The cleanest empirical demonstration of the methodology's value is not running PT on a new model, but running PT on the same model with deliberately diffuse priors on parameters thought to be weakly identified — for instance, the labor disutility parameter $\psi$ in FS2000, or one of the persistence parameters. Holding the model fixed and varying only the prior tightness isolates the contribution of the prior to posterior concentration, which is precisely what an identification diagnostic should isolate. Hypothesis: under loose priors, the local barrier curve should develop a non-trivial peak at moderate-to-large $\beta$. This indicates the difficulty has migrated from "the prior is far from the posterior" (the FS2000-baseline regime) to "the posterior itself is geometrically corrupt."
+
+## 2. Cataloguing barrier signatures across identification pathology types
+
+@canova2009back distinguish observational equivalence, partial identification, and weak identification, and each is expected to manifest as a distinct barrier shape. A natural empirical extension is to construct (or identify in the literature) a small set of DSGE specifications exhibiting each pathology type and to report the corresponding $\lambda(\beta)$ curves. Multimodal posteriors — for which @brault2024parallel provides the canonical examples (NK with indeterminacy, Smets-Wouters with diffuse priors) — are an additional case where modal separation should produce identifiably distinct barrier signatures from the smooth ridge case.
+
+## 3. A diagnostic framework for any DSGE specification
+
+The end goal is an organized recipe for applying these tools to an arbitrary DSGE model. Outline :
+
+1. Estimate the model with both NUTS and PT; compare posterior marginals as a first sanity check.
+2. Read $\Lambda$ against the prior-tightness regime; large $\Lambda$ under tight priors is the main warning sign.
+3. Plot $\lambda(\beta)$ and classify the shape (peak at $\beta = 0$, peak at $\beta = 1$, multimodal, flat). Each shape suggests a different intervention — re-examine prior choice, re-examine model specification, re-examine data informativeness.
+4. Compare with traditional identification tests (Iskrev rank conditions, Komunjer-Ng spectral tests) on the same parameters; PT diagnostics serve as a complementary Bayesian, sampling-based view.
+5. Report all of the above in a standardized "identification appendix" alongside the main estimation results — a contribution toward improving the transparency of identification claims in applied DSGE work.
+
+The first item is already pretty feasible with the pipeline established here. The remaining items define the work plan for the thesis. On we go!
+
+# References {.unnumbered}
+
+::: {#refs}
+:::
