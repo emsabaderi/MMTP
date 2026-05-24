@@ -1,12 +1,7 @@
-/Manifest*.toml
-
-/dev/FS2017.jl
-
-/dev/scratch.jl
-
 /.quarto/
-**/*.quarto_ipynb
 
 /results/
 
 /.CondaPkg
+
+**/*.quarto_ipynb

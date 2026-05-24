@@ -13,7 +13,12 @@ abstract: |
   *well-identified baseline* against which weakly- or partially-identified specifications
   will be compared in subsequent work.
 ---
-
+```{julia}
+#| eval: true
+#| echo: false
+#| output: false
+ENV["COLUMNS"] = 200
+```
 # Background
 
 ## What is a DSGE model?
@@ -67,7 +72,7 @@ Pigeons.jl [@surjanovic2025pigeons] implements modern PT with diagnostics drawn 
 
 - **Round-trip rate**: how often a replica successfully travels from $\beta = 0$ to $\beta = 1$ and back. Each round trip is functionally an independent draw from the posterior.
 
-@brault2024parallel, at the Bank of Canada, was the first to apply PT to DSGE estimation, using a MATLAB+Dynare implementation focused on multimodal posteriors. His underlying DSGE model was from Smets-Wouters under diffuse priors [@smets2007shocks; @herbst2014sequential]. The present work extends that line in two directions: a Julia implementation native to the modern probabilistic-programming ecosystem, and explicit use of the modern barrier diagnostics as *identification* tools rather than as sampler-quality measures.
+@brault2024parallel, at the Bank of Canada, was the first to apply PT to DSGE estimation, using a MATLAB+Dynare implementation focused on multimodal posteriors. His underlying DSGE model was from Smets-Wouters under diffuse priors [@smets2007shocks; @herbst2014sequential]. The present work extends that line in two directions: a Julia implementation native to the modern probabilistic-programming ecosystem, and explicit use of the modern barrier diagnostics as **identification** tools rather than as sampler-quality measures.
 
 ---
 
@@ -96,9 +101,8 @@ Pkg.status()
 ```{julia}
 #| echo: true
 #| eval: true
+#| output: false
 # %% Imports
-using Revise, BenchmarkTools
-
 import CondaPkg
 import Serialization: serialize, deserialize
 import Turing
@@ -107,11 +111,22 @@ import MacroModelling as MM
 import StatsPlots: plot, savefig
 import Pigeons
 import MCMCChains as MCMCC
+import PrettyTables: pretty_table
 
 CondaPkg.resolve()
 include("utils/utils.jl")
 include("utils/FS2000_PT_setup.jl")
-
+```
+```{julia}
+#| echo: false
+#| eval: true
+#| output: false
+Main.include("utils/FS2000_PT_setup.jl")
+```
+```{julia}
+#| echo: false
+#| eval: true
+#| output: true
 println("Observables: ", AxisKeys.axiskeys(data, :Variable))
 println("Number of parameters: ", length(prior_dists))
 ```
@@ -165,17 +180,6 @@ The drawback is that each child process must be able to *re-create* the full tar
 ## The Pigeons sampling call
 
 The PT run itself is short to write but expensive to execute (about 30–60 minutes for 7 rounds with 4 MPI processes on a modest laptop), so the cell below is echoed but not evaluated. The result has been cached separately and is loaded for plotting.
-```{julia}
-#| echo: false
-#| eval: false
-
-const PIGEONS_SEED = 123
-
-FS2000_PT = pt_cache_or_compute("assets/cache/FS2000_PT_chain") do
-    error("PT cache missing — run pigeons in the REPL first.")
-end
-```
-
 
 ```{julia}
 #| echo: true
@@ -185,14 +189,14 @@ const PIGEONS_SEED = 123
 
 FS2000_PT = pt_cache_or_compute("assets/cache/FS2000_PT_chain") do
     Pigeons.pigeons(
-        target=FS2000_PT_lp,
+        target=FS2000_PT_lp, #stands for FS2000_PT log potential, defined within FS2000_PT_setup.jl
         record=[
             Pigeons.traces;
             Pigeons.round_trip;
             Pigeons.record_default()
         ],
         n_chains=10,
-        n_rounds=7,
+        n_rounds=8,
         seed=PIGEONS_SEED,
         checkpoint=true,
         on=Pigeons.ChildProcess(
@@ -203,10 +207,16 @@ FS2000_PT = pt_cache_or_compute("assets/cache/FS2000_PT_chain") do
     )
 end
 ```
+```{julia}
+#| eval: true
+#| echo: false
+#| output: false
+
+isdir("results") && run(`rm -r results`)
+```
 
 A few choices worth highlighting:
 
-- `variational = Pigeons.GaussianReference()` replaces the prior with a Gaussian fitted to early posterior draws. This pulls the reference closer to the target and reduces $\Lambda$ — for FS2000 we observe a drop from approximately $\Lambda \approx 6.6$ without it to $\Lambda \approx 5.2$ with it.
 - `multithreaded` defaults to `false`; combined with `n_threads = 1` and the `BLAS.set_num_threads(1)` at the top of the document, this avoids both Pigeons-level and BLAS-level oversubscription across the four child processes.
 - The `dependencies` vector points only to the setup file path. Every package import the children need is declared inside that file, so the children rebuild the target from scratch with no implicit dependencies on the parent process.
 
@@ -235,6 +245,49 @@ The NUTS and PT marginal posteriors agree closely on means and credible interval
 
 ## Communication barriers
 
+### Reading the PT machinery table
+
+As Pigeons runs parallel sampling scans, the following table populates:
+
+```{julia}
+#| echo: false
+#| eval: true
+#| output: false
+pigeons_summary = copy(FS2000_PT.shared.reports.summary)
+
+# %%
+rename!(pigeons_summary,
+    :n_scans => :scans,
+    :n_tempered_restarts => :restarts,
+    :global_barrier => :Λ,
+    :last_round_max_time => Symbol("time(s)"),
+    :last_round_max_allocation => Symbol("alloc(B)"),
+    :stepping_stone => Symbol("log(Z₁/Z₀)")
+)
+# %%
+select!(pigeons_summary,
+    Not(:global_barrier_variational)
+)
+```
+```{julia}
+#| echo: true
+#| eval: true
+#| output: true
+# %%
+pretty_table(pigeons_summary;
+    backend=Val(:html),
+    show_subheader=false)
+```
+
+To read this table:
+
+1. Each row indicates a new tuning round in parallel tempering.
+2. **scans** indicate the number of samples from that tuning round.
+3. **restarts** indicate the number of samples form the reference (prior?) which successfully percolate to the target (posterior?) distribution. In this example, with `n_rounds=8`, we see 12 tempered restarts. The number of restarts is expected to greatly increase for later rounds. For a production-quality run, we would set `n_rounds=10+`. A higher number indicates more successful mixing and is more desirable.
+4. **$\Lambda$** indicates the global communication barrier described earlier. The inherent difficulty of the sampling problem. Used in the rule of thumb calculation for the number of chains to be running the parallel tempering engine on.
+5. **log(Z_1/Z_0)** indicates the "stepping stone estimator" of the paralllel tempering output.
+
+### Interpreting Global/Local Communication Barriers
 ```{julia}
 #| echo: true
 #| eval: true
@@ -269,10 +322,16 @@ plot(p1, p2; layout = (1, 2), size = (1200, 400))
 ```{julia}
 #| echo: true
 #| eval: true
+#| output: false
 
-Λ         = Pigeons.global_barrier(pt)
-restarts  = Pigeons.n_round_trips(pt)
+Λ         = Pigeons.global_barrier(FS2000_PT)
+restarts  = Pigeons.n_round_trips(FS2000_PT)
+```
 
+```{julia}
+#| echo: false
+#| eval: true
+#| output: true
 println("Global communication barrier  Λ = ", round(Λ, digits = 3))
 println("Total tempered restarts        = ", restarts)
 ```
@@ -281,7 +340,7 @@ println("Total tempered restarts        = ", restarts)
 
 The local barrier curve $\lambda(\beta)$ has a single, sharp peak at $\beta = 0$ and decays rapidly: roughly half of the total cumulative barrier is accumulated in the first 5% of the tempering path, and across $[0.25, 1]$ the local barrier is essentially flat near zero. This is the geometric signature of a posterior that is concentrated relative to its prior. The data are dominant; once any non-trivial likelihood weight is applied, the posterior snaps to a tight, smooth, near-Gaussian region, and from that point on the tempered chains agree well.
 
-The contrast is what matters for the methodology. The signature I look for in an poorly identified model is the opposite: a peak or shoulder near $\beta = 1$ (difficulty at the posterior, characteristic of likelihood ridges or weakly identified directions), or multiple peaks across the interval (modal separation). FS2000 shows none of these features. Combined with the close agreement between NUTS and PT marginals, the modest $\Lambda$, and the steady accumulation of round-trip restarts across rounds, FS2000 stands as a well-identified baseline: the visual and quantitative reference against which weaker specifications will be compared.
+The signature I look for in a poorly identified model is the opposite: a peak or shoulder near $\beta = 1$ (difficulty at the posterior, characteristic of likelihood ridges or weakly identified directions), or multiple peaks across the interval (modal separation). FS2000 shows none of these features. Combined with the close agreement between NUTS and PT marginals, the modest $\Lambda$, and the steady accumulation of round-trip restarts across rounds, FS2000 stands as a well-identified baseline: the visual and quantitative reference against which weaker specifications will be compared.
 
 ---
 
@@ -291,7 +350,7 @@ The proof of concept above establishes the pipeline and the baseline. Three line
 
 ## 1. Comparing well- and weakly-identified specifications of the same model
 
-The cleanest empirical demonstration of the methodology's value is not running PT on a new model, but running PT on the same model with deliberately diffuse priors on parameters thought to be weakly identified — for instance, the labor disutility parameter $\psi$ in FS2000, or one of the persistence parameters. Holding the model fixed and varying only the prior tightness isolates the contribution of the prior to posterior concentration, which is precisely what an identification diagnostic should isolate. Hypothesis: under loose priors, the local barrier curve should develop a non-trivial peak at moderate-to-large $\beta$. This indicates the difficulty has migrated from "the prior is far from the posterior" (the FS2000-baseline regime) to "the posterior itself is geometrically corrupt."
+Running PT on the same model with deliberately diffuse priors on parameters thought to be weakly identified. Holding the model fixed and varying only the prior tightness isolates the contribution of the prior to posterior concentration. Hypothesis: under loose priors, the local barrier curve should develop a non-trivial peak at moderate-to-large $\beta$. This indicates the difficulty has migrated from "the prior is far from the posterior" (the FS2000-baseline regime) to "the posterior itself is geometrically corrupt."
 
 ## 2. Cataloguing barrier signatures across identification pathology types
 
@@ -299,7 +358,7 @@ The cleanest empirical demonstration of the methodology's value is not running P
 
 ## 3. A diagnostic framework for any DSGE specification
 
-The end goal is an organized recipe for applying these tools to an arbitrary DSGE model. Outline :
+The end goal (ambitious) is an organized recipe for applying these tools to an arbitrary DSGE model. Outline :
 
 1. Estimate the model with both NUTS and PT; compare posterior marginals as a first sanity check.
 2. Read $\Lambda$ against the prior-tightness regime; large $\Lambda$ under tight priors is the main warning sign.

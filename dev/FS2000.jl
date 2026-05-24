@@ -9,8 +9,10 @@ Pkg.instantiate()
 Pkg.resolve()
 Pkg.status()
 
+# %%
+isdir("results")
 # %% Imports
-using Revise, BenchmarkTools
+using PrettyTables, DataFrames
 
 import CondaPkg
 import Serialization: serialize, deserialize
@@ -67,7 +69,7 @@ FS2000_PT = pt_cache_or_compute("assets/cache/FS2000_PT_chain") do
             Pigeons.record_default()
         ],
         n_chains=10,
-        n_rounds=7,
+        n_rounds=8,
         seed=PIGEONS_SEED,
         checkpoint=true,
         on=Pigeons.ChildProcess(
@@ -77,9 +79,31 @@ FS2000_PT = pt_cache_or_compute("assets/cache/FS2000_PT_chain") do
         )
     )
 end
-# %%
-FS2000_PT |> typeof
 
+# %%
+isdir("results") && run(`rm -r results`)
+# %%
+#| echo: true
+#| eval: true
+#| tbl-cap: "Per-round PT diagnostics for FS2000."
+
+pigeons_summary = copy(FS2000_PT.shared.reports.summary);
+rename!(pigeons_summary,
+    :n_scans => :scans,
+    :n_tempered_restarts => :restarts,
+    :global_barrier => :Λ,
+    :last_round_max_time => Symbol("time(s)"),
+    :last_round_max_allocation => Symbol("alloc(B)"),
+    :stepping_stone => Symbol("log(Z₁/Z₀)")
+);
+select!(pigeons_summary,
+    Not(:global_barrier_variational)
+);
+
+# %%
+pretty_table(pigeons_summary;
+    backend=Val(:html),
+    show_subheader=false)
 # %% PT chain analysis
 # FS2000_PT_load = Pigeons.load(FS2000_PT)
 FS2000_PT_chain = MCMCC.Chains(FS2000_PT)
@@ -88,6 +112,9 @@ FS2000_PT_chain_renamed = Turing.replacenames(FS2000_PT_chain, Dict(["parameters
 # %% PT sampler plot
 FS2000_PT_chain_plot = plot(FS2000_PT_chain_renamed)
 savefig(FS2000_PT_chain_plot, "assets/plots/FS2000_PT_chain_plot.png")
+
+# %%
+FS2000_PT_chain_renamed.value
 
 # %% PT restarts, barrier plot
 using Interpolations
@@ -118,4 +145,11 @@ p2 = plot(βs, local_barrier_density;
 
 plt = plot(p1, p2, layout=(1, 2), size=(1200, 400))
 savefig(plt, "assets/plots/FS2000_PT_barriers.png")
+# %%
+
+Λ = Pigeons.global_barrier(FS2000_PT)
+
+# %%
+restarts = Pigeons.n_round_trips(FS2000_PT)
+
 # %%

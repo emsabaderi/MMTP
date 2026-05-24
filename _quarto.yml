@@ -7,7 +7,7 @@ engine: julia
 
 format:
   html:
-    theme: cosmo
+    theme: zephyr
     toc: true
     toc-location: left
     toc-depth: 3
