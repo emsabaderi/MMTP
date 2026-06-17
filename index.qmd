@@ -32,6 +32,8 @@ Dynamic Stochastic General Equilibrium (DSGE) models represent macroeconomies as
 
 DSGE models are central to monetary policy analysis at major central banks and are used for forecasting, counterfactual policy analysis, and the structural decomposition of business-cycle fluctuations. Textbook treatments include @herbst2016bayesian and @an2007bayesian.
 
+### Example DSGE Model:
+
 ## Identification problems in DSGE estimation
 
 @canova2009back identify three distinct identification pathologies that pervade medium- and large-scale DSGE models:
