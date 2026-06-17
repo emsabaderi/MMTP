@@ -23,7 +23,7 @@ import CSV: read
 using AxisKeys, DataFrames
 
 # %% load data
-dat = read("assets/data/FS2017_data.csv", DataFrame)
+dat = read("assets/data/HS2017_data.csv", DataFrame)
 data = KeyedArray(Array(dat)',
     Variable=Symbol.(names(dat)),
     Time=1:size(dat, 1)
